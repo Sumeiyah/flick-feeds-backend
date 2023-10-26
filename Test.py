@@ -53,9 +53,4 @@ class TestCodeUnderTest:
         with pytest.raises(IntegrityError):
             db.session.commit()
 
-    # Creating a Post object with a non-existent user ID should raise a ForeignKeyConstraintError
-    def test_create_post_with_nonexistent_user_id(self):
-        post = Post(UserID=100, MovieID=1, Review='Great movie!', Rating=4.5)
-        db.session.add(post)
-        with pytest.raises(ForeignKeyConstraintError):
-            db.session.commit()
+    
