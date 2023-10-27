@@ -1,0 +1,22 @@
+# Byte-compiled files
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+
+# IDE settings
+.idea/
+.vscode/
+
+# OS generated files
+.DS_Store  # macOS
+*.swp  # Vim
+Thumbs.db  # Windows
+
+# Logs
+*.log
+
+# Other
+*.tmp
+*.bak
