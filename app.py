@@ -340,8 +340,40 @@ def join_club(club_id):
 def get_posts():
     # Get all posts route
     posts = Post.query.all()
-    post_list = [{'PostID': post.PostID, 'UserID': post.UserID, 'MovieID': post.MovieID} for post in posts]
+    post_list = []
+    for post in posts:
+        # Serialize comments using 'CommentText' as per your Comment model
+        comments_list = [
+            {
+                'CommentID': comment.CommentID,
+                'CommentText': comment.CommentText,  # Use the correct attribute here
+                'UserID': comment.UserID
+            } for comment in post.comments
+        ]
+        
+        # Serialize likes (assumes you have a similar structure for Like model)
+        likes_list = [
+            {
+                'LikeID': like.LikeID,
+                'UserID': like.UserID
+            } for like in post.likes
+        ]
+        
+        # Serialize the post data including the comments and likes
+        post_data = {
+            'PostID': post.PostID,
+            'UserID': post.UserID,
+            'MovieID': post.MovieID,
+            'Review': post.Review,
+            'Rating': post.Rating,
+            'ImagePath': post.ImagePath,
+            'Comments': comments_list,
+            'Likes': likes_list
+        }
+        post_list.append(post_data)
+        
     return jsonify({'posts': post_list}), 200
+
 
 @app.route('/get_user_posts/<int:user_id>', methods=['GET'])
 def get_user_posts(user_id):
