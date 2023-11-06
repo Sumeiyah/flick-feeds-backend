@@ -68,19 +68,24 @@ def login():
         # Ensure the Username is a string
         username_str = str(user.Username)
 
+        # Add username to session
+        session['username'] = username_str
+
         # Create a new token with the user identity inside
         access_token = create_access_token(identity=username_str)
 
         # Explicitly converting token to string if it's not already
-        access_token_str = access_token.decode('utf-8') if isinstance(access_token, bytes) else access_token
+        access_token_str = str(access_token)
 
         return jsonify({
             'message': 'Login Successful!',
             'access_token': access_token_str
         }), 200
-    
-    return jsonify({'message': 'Invalid Credentials!'}), 401
-
+    else:
+        # Clear the username from session in case of failed authentication
+        session.pop('username', None)
+        
+        return jsonify({'error': 'Invalid Credentials!'}), 401
 
 @app.route('/profile/<string:username>', methods=['GET'])
 def profile_by_username(username):
@@ -595,16 +600,36 @@ def comment_on_post(post_id):
     else:
         return jsonify({'message': 'You must be logged in to comment!'}), 401
 
-# Follow a User
+
+from flask import jsonify
+
 @app.route('/follow_user/<int:followee_id>', methods=['POST'])
 def follow_user(followee_id):
     # Follow a user route
-    user = User.query.filter_by(Username=session['username']).first()
+    username = session.get('username')  # Safely get the username, returns None if not found
+    if username is None:
+        return jsonify({'error': 'You must be logged in to follow users.'}), 403
+
+    user = User.query.filter_by(Username=username).first()
+
     if user:
+        # Check if the user is trying to follow themselves
+        if user.UserID == followee_id:
+            return jsonify({'message': "You can't follow yourself."}), 400
+
+        # Check if the user is already following the intended user
+        existing_follow = Follow.query.filter_by(FollowerID=user.UserID, FolloweeID=followee_id).first()
+        if existing_follow:
+            return jsonify({'message': 'Sorry, you are already following this user.'}), 400
+
         follow = Follow(FollowerID=user.UserID, FolloweeID=followee_id)
         db.session.add(follow)
         db.session.commit()
         return jsonify({'message': 'Followed user successfully!'}), 200
+    else:
+        # User is not found in the session, hence not logged in
+        return jsonify({'error': 'User not found.'}), 404
+
 
 # Unfollow a User
 @app.route('/unfollow_user/<int:followee_id>', methods=['DELETE'])
