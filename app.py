@@ -351,15 +351,10 @@ def get_posts():
             } for comment in post.comments
         ]
         
-        # Serialize likes (assumes you have a similar structure for Like model)
-        likes_list = [
-            {
-                'LikeID': like.LikeID,
-                'UserID': like.UserID
-            } for like in post.likes
-        ]
+        # Count the number of likes for the post
+        likes_count = len(post.likes)
         
-        # Serialize the post data including the comments and likes
+        # Serialize the post data including the comments and likes count
         post_data = {
             'PostID': post.PostID,
             'UserID': post.UserID,
@@ -368,7 +363,7 @@ def get_posts():
             'Rating': post.Rating,
             'ImagePath': post.ImagePath,
             'Comments': comments_list,
-            'Likes': likes_list
+            'Likes': likes_count  # Changed from 'Likes': likes_list
         }
         post_list.append(post_data)
         
