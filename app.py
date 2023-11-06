@@ -1,6 +1,8 @@
 from flask import Flask, jsonify, request, session
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask_jwt_extended import JWTManager, create_access_token
 from Models import *
+from flask_jwt_extended import create_access_token
 from flask_cors import CORS
 from sqlalchemy import func
 from sqlalchemy.orm.exc import NoResultFound
@@ -9,6 +11,8 @@ from flask_migrate import Migrate
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:3000"], methods=['GET', 'POST', 'PATCH', 'DELETE','PUT'], allow_headers=['Authorization', 'Content-Type', 'x-access-token'])
 app.config['SECRET_KEY'] = 'c9cb13901b374ed2b4d9735e0e0a5fde'
+app.config['JWT_SECRET_KEY'] = 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI1NzM1YWI0MTc4OTlhOWNmMWU3Y2I4YWE1NWEzOWZiMyIsInN1YiI6IjY1M2E3YzEzOGEwZTliMDE0ZTAxMDVkMyIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.sOUXsDXdzl34G4Vmhx59ToCqMpkOxFSfrsB8xcxGVEo'  
+jwt = JWTManager(app)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///zite.db'
 migrate = Migrate(app, db)
 db.init_app(app)
@@ -20,24 +24,39 @@ db.init_app(app)
 def register():
     # User registration route
     data = request.get_json()
-
-    # Default values
-    default_profile_pic = 'https://i.stack.imgur.com/34AD2.jpg'
-    default_bio = "Hey there i'm a New flick-feeds User!"
     
-    # Note: It's okay to leave ContactDetails as null if you don't want a default for it
+    # Check if user already exists
+    existing_user = User.query.filter_by(Username=data['username']).first()
+    if existing_user:
+        return jsonify({'message': 'User already exists'}), 409
+
+    hashed_password = generate_password_hash(data['password'])
 
     new_user = User(
         Username=data['username'],
-        Password=data['password'],
+        Password=hashed_password,
         Email=data['email'],
-        ProfilePicture=default_profile_pic,
-        Bio=default_bio
+        ProfilePicture='https://i.stack.imgur.com/34AD2.jpg',
+        Bio="Hey there I'm a new Flick-Feeds user!"
     )
 
     db.session.add(new_user)
     db.session.commit()
-    return jsonify({'message': 'Registration Successful!'}), 201
+
+    # Ensure the Username is a string
+    username_str = str(new_user.Username)
+
+    # Create a token for the new user
+    access_token = create_access_token(identity=username_str)
+
+    # Explicitly converting token to string if it's not already
+    access_token_str = access_token.decode('utf-8') if isinstance(access_token, bytes) else access_token
+
+    return jsonify({
+        'message': 'Registration Successful!',
+        'access_token': access_token_str
+    }), 201
+
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -45,29 +64,23 @@ def login():
     data = request.get_json()
     user = User.query.filter_by(Username=data['username']).first()
     
-    if user:
-        if user.Password == data['password']:
-            session['username'] = user.Username
-            return jsonify({'message': 'Login Successful!'}), 200
+    if user and check_password_hash(user.Password, data['password']):
+        # Ensure the Username is a string
+        username_str = str(user.Username)
+
+        # Create a new token with the user identity inside
+        access_token = create_access_token(identity=username_str)
+
+        # Explicitly converting token to string if it's not already
+        access_token_str = access_token.decode('utf-8') if isinstance(access_token, bytes) else access_token
+
+        return jsonify({
+            'message': 'Login Successful!',
+            'access_token': access_token_str
+        }), 200
     
     return jsonify({'message': 'Invalid Credentials!'}), 401
 
-
-@app.route('/profile/<int:user_id>', methods=['GET'])
-def profile(user_id):
-    # View user profile route
-    user = User.query.get(user_id)
-    if user:
-        return jsonify({
-            'UserID': user.UserID,
-            'Username': user.Username,
-            'Email': user.Email,
-            'ProfilePicture': user.ProfilePicture,
-            'Bio': user.Bio,
-            'ContactDetails': user.ContactDetails
-            # Add other user attributes as needed
-        }), 200
-    return jsonify({'message': 'User not found!'}), 404
 
 @app.route('/profile/<string:username>', methods=['GET'])
 def profile_by_username(username):
@@ -88,29 +101,14 @@ def profile_by_username(username):
 
 @app.route('/update_profile/<int:user_id>', methods=['PUT'])
 def update_profile(user_id):
-    # Fetch the user from the database using the provided user_id
+    # Update user profile route
     user = User.query.get(user_id)
-    
     if user:
         data = request.get_json()
-
-        # Check for each field in the JSON data and update accordingly
-        if 'Username' in data:
-            user.Username = data['Username']
-
-        if 'Bio' in data:
-            user.Bio = data['Bio']
-
-        if 'ProfilePicture' in data:
-            user.ProfilePicture = data['ProfilePicture']
-
-        # Commit the updates to the database
+        # Update user attributes as needed...
         db.session.commit()
-
         return jsonify({'message': 'Profile updated successfully!'}), 200
-
     return jsonify({'message': 'User not found!'}), 404
-
 
 # Movies and Posts
 @app.route('/post_movie', methods=['POST'])
