@@ -106,14 +106,22 @@ def profile_by_username(username):
 
 @app.route('/update_profile/<int:user_id>', methods=['PUT'])
 def update_profile(user_id):
-    # Update user profile route
     user = User.query.get(user_id)
     if user:
         data = request.get_json()
-        # Update user attributes as needed...
+        
+        # Update user attributes as needed
+        user.Username = data.get('username', user.Username)
+        user.Email = data.get('email', user.Email)
+        user.ProfilePicture = data.get('profilePicture', user.ProfilePicture)
+        user.Bio = data.get('bio', user.Bio)
+        user.ContactDetails = data.get('contactDetails', user.ContactDetails)
+
         db.session.commit()
         return jsonify({'message': 'Profile updated successfully!'}), 200
-    return jsonify({'message': 'User not found!'}), 404
+    else:
+        return jsonify({'message': 'User not found!'}), 404
+
 
 # Movies and Posts
 @app.route('/post_movie', methods=['POST'])
