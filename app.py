@@ -342,15 +342,17 @@ def get_posts():
     posts = Post.query.all()
     post_list = []
     for post in posts:
-        # Serialize comments using 'CommentText' as per your Comment model
-        comments_list = [
-            {
-                'CommentID': comment.CommentID,
-                'CommentText': comment.CommentText,  # Use the correct attribute here
-                'UserID': comment.UserID
-            } for comment in post.comments
-        ]
-        
+        # Serialize comments including the username of the commenter
+        comments_list = []
+        for comment in post.comments:
+            user = User.query.filter_by(UserID=comment.UserID).first()
+            if user:
+                comments_list.append({
+                    'Username': user.Username,
+                    'CommentText': comment.CommentText
+                      # Fetch the Username from the User model
+                })
+
         # Count the number of likes for the post
         likes_count = len(post.likes)
         
@@ -363,11 +365,12 @@ def get_posts():
             'Rating': post.Rating,
             'ImagePath': post.ImagePath,
             'Comments': comments_list,
-            'Likes': likes_count  # Changed from 'Likes': likes_list
+            'Likes': likes_count
         }
         post_list.append(post_data)
         
     return jsonify({'posts': post_list}), 200
+
 
 
 @app.route('/get_user_posts/<int:user_id>', methods=['GET'])
