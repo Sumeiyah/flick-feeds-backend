@@ -288,3 +288,4 @@ def test_user_following(client):
         response = client.get('/following/test_user1')
         data = response.get_json()
         assert data['following_count'] == 1
+        

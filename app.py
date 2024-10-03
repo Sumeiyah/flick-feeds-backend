@@ -17,6 +17,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///zite.db'
 migrate = Migrate(app, db)
 db.init_app(app)
 
+
 # Your models from the previous answer...
 
 # User Authentication and Profile Management

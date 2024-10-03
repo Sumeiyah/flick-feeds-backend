@@ -124,4 +124,4 @@ This project is licensed under the terms of the [MIT License](LICENSE). Please r
 
 ---
 
-**Join us** in this cinematic odyssey. With FlickFeeds and TV Series & Movies Club, every scene truly comes to life! 🍿🎬
+**Join us** in this cinematic odyssey. With FlickFeeds and TV Series & Movies Club, every scene truly comes to life! 🍿🎬  

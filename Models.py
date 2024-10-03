@@ -114,3 +114,4 @@ class PrivatePost(db.Model):
     user = db.relationship('User', backref='private_posts')
     movie = db.relationship('Movie', backref='private_posts')
 
+
