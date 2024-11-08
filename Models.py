@@ -1,4 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime
+
 
 db = SQLAlchemy()
 
@@ -14,7 +16,7 @@ class User(db.Model):
 
     posts = db.relationship('Post', backref='author')
     clubs_owned = db.relationship('Club', backref='owner')
-    memberships = db.relationship('Membership', backref='member')
+    memberships = db.relationship('Membership', back_populates='user')  
     movies_watched = db.relationship('WatchedMovie', backref='viewer')
     comments = db.relationship('Comment', backref='commenter')
     likes = db.relationship('Like', backref='liker')
@@ -51,13 +53,19 @@ class Club(db.Model):
     Name = db.Column(db.String(255), nullable=False)
     Genre = db.Column(db.String(255))
     OwnerID = db.Column(db.Integer, db.ForeignKey('users.UserID', name='fk_clubs_users'), nullable=False)
+    CreatedAt = db.Column(db.DateTime, default=datetime.utcnow)  # Add this line
+    Description = db.Column(db.Text, nullable=True)  # Add this line
 
-    members = db.relationship('Membership', backref='club')
+
+    members = db.relationship('Membership', back_populates='club', cascade='all, delete-orphan')
 
 class Membership(db.Model):
     __tablename__ = 'memberships'
     UserID = db.Column(db.Integer, db.ForeignKey('users.UserID', name='fk_memberships_users'), primary_key=True)
     ClubID = db.Column(db.Integer, db.ForeignKey('clubs.ClubID', name='fk_memberships_clubs'), primary_key=True)
+
+    user = db.relationship('User', back_populates='memberships')
+    club = db.relationship('Club', back_populates='members')
 
 class Follow(db.Model):
     __tablename__ = 'follows'

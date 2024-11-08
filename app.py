@@ -7,9 +7,14 @@ from flask_cors import CORS
 from sqlalchemy import func
 from sqlalchemy.orm.exc import NoResultFound
 from flask_migrate import Migrate
+from flask import make_response
+import logging
+from flask_jwt_extended import jwt_required, get_jwt_identity
+
+
 
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:3000"], methods=['GET', 'POST', 'PATCH', 'DELETE','PUT'], allow_headers=['Authorization', 'Content-Type', 'x-access-token'])
+CORS(app,supports_credentials=True, origins=["http://localhost:3000","http://127.0.0.1:5000"], methods=['GET', 'POST', 'PATCH', 'DELETE','PUT','OPTIONS'], allow_headers=['Authorization', 'Content-Type', 'x-access-token'], expose_headers=['Authorization'])
 app.config['SECRET_KEY'] = 'c9cb13901b374ed2b4d9735e0e0a5fde'
 app.config['JWT_SECRET_KEY'] = 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI1NzM1YWI0MTc4OTlhOWNmMWU3Y2I4YWE1NWEzOWZiMyIsInN1YiI6IjY1M2E3YzEzOGEwZTliMDE0ZTAxMDVkMyIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.sOUXsDXdzl34G4Vmhx59ToCqMpkOxFSfrsB8xcxGVEo'  
 jwt = JWTManager(app)
@@ -18,14 +23,21 @@ migrate = Migrate(app, db)
 db.init_app(app)
 
 
-# Your models from the previous answer...
 
+from flask import session
+# Enable logging for all levels
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+app.logger.setLevel(logging.INFO)
+
+# Ensure Flask logs through the built-in WSGI server (stream handler)
+if not app.debug:
+    app.logger.info('Flask app running in Production Mode (logging enabled)')
 # User Authentication and Profile Management
+
 @app.route('/register', methods=['POST'])
 def register():
-    # User registration route
     data = request.get_json()
-    
+
     # Check if user already exists
     existing_user = User.query.filter_by(Username=data['username']).first()
     if existing_user:
@@ -44,49 +56,73 @@ def register():
     db.session.add(new_user)
     db.session.commit()
 
-    # Ensure the Username is a string
-    username_str = str(new_user.Username)
+    # Set the username in the session
+    session['username'] = new_user.Username
 
     # Create a token for the new user
-    access_token = create_access_token(identity=username_str)
-
-    # Explicitly converting token to string if it's not already
-    access_token_str = access_token.decode('utf-8') if isinstance(access_token, bytes) else access_token
+    access_token = create_access_token(identity=new_user.Username)
 
     return jsonify({
         'message': 'Registration Successful!',
-        'access_token': access_token_str
+        'access_token': access_token
     }), 201
 
 
 @app.route('/login', methods=['POST'])
 def login():
-    # User login route
     data = request.get_json()
     user = User.query.filter_by(Username=data['username']).first()
     
     if user and check_password_hash(user.Password, data['password']):
-        # Ensure the Username is a string
-        username_str = str(user.Username)
+        # Set the username in the session
+        session['username'] = user.Username
 
-        # Add username to session
-        session['username'] = username_str
+        # Generate token and return full user details
+        access_token = create_access_token(identity=user.Username)
 
-        # Create a new token with the user identity inside
-        access_token = create_access_token(identity=username_str)
-
-        # Explicitly converting token to string if it's not already
-        access_token_str = str(access_token)
+        # Log the success message and access token to the backend terminal
+        app.logger.info(f"Login Successful for {user.Username}")
+        app.logger.info(f"Access Token: {access_token}")
 
         return jsonify({
             'message': 'Login Successful!',
-            'access_token': access_token_str
+            'access_token': access_token,
+            'user': {
+                'UserID': user.UserID,
+                'Username': user.Username,
+                'Email': user.Email,
+                'ProfilePicture': user.ProfilePicture,
+                'Bio': user.Bio,
+                'ContactDetails': user.ContactDetails
+            }
         }), 200
     else:
-        # Clear the username from session in case of failed authentication
-        session.pop('username', None)
-        
         return jsonify({'error': 'Invalid Credentials!'}), 401
+
+
+@app.route('/current_user', methods=['GET', 'OPTIONS'])
+def current_user():
+    if request.method == 'OPTIONS':
+        response = make_response()
+        response.headers['Access-Control-Allow-Origin'] = 'http://localhost:3000'
+        response.headers['Access-Control-Allow-Methods'] = 'GET,POST, PATCH, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, x-access-token'
+        return response
+
+    # Handle GET request here
+    return "Current User Data"
+
+@app.route('/protected_endpoint', methods=['GET'])
+@jwt_required()  # Ensure the JWT is valid
+def protected_endpoint():
+    current_user = get_jwt_identity()  # Retrieve the username from the token
+    user = User.query.filter_by(Username=current_user).first()
+
+    if not user:
+        return jsonify({"message": "User not found!"}), 404
+
+    return jsonify({"message": f"Welcome, {user.Username}!"})
+
 
 @app.route('/profile/<string:username>', methods=['GET'])
 def profile_by_username(username):
@@ -122,6 +158,31 @@ def update_profile(user_id):
         return jsonify({'message': 'Profile updated successfully!'}), 200
     else:
         return jsonify({'message': 'User not found!'}), 404
+    
+@app.route('/search_users', methods=['GET'])
+@jwt_required()
+def search_users():
+    query = request.args.get('query', '').strip()
+    if not query:
+        return jsonify({'users': []}), 200
+
+    users = User.query.filter(User.Username.ilike(f'%{query}%')).all()
+    current_user = get_jwt_identity()
+    current_user_obj = User.query.filter_by(Username=current_user).first()
+
+    result = []
+    for user in users:
+        if user.Username != current_user:
+            is_following = Follow.query.filter_by(FollowerID=current_user_obj.UserID, FolloweeID=user.UserID).first() is not None
+            result.append({
+                'UserID': user.UserID,
+                'Username': user.Username,
+                'ProfilePicture': user.ProfilePicture,
+                'followers_count': Follow.query.filter_by(FolloweeID=user.UserID).count(),
+                'is_following': is_following
+            })
+    return jsonify({'users': result}), 200
+
 
 
 # Movies and Posts
@@ -145,10 +206,18 @@ def post_movie():
     rating = data['Rating']
     image_path = data['ImagePath'] if data['ImagePath'] else "https://w7.pngwing.com/pngs/116/765/png-transparent-clapperboard-computer-icons-film-movie-poster-angle-text-logo-thumbnail.png"
 
-    movie = Movie(Title=movie_title)
-    db.session.add(movie)
-    db.session.flush()  # To get the generated MovieID for the new movie, if required.
+    # Check if the movie already exists in the database
+    movie = Movie.query.filter_by(Title=movie_title).first()
+    if not movie:
+        # If the movie doesn't exist, create a new one with the provided ImagePath
+        movie = Movie(
+            Title=movie_title,
+            ImagePath=image_path  # Set the ImagePath here
+        )
+        db.session.add(movie)
+        db.session.flush()  # To get the generated MovieID for the new movie, if required.
 
+    # Create the post
     post = Post(
         UserID=user.UserID,
         MovieID=movie.MovieID, 
@@ -243,15 +312,15 @@ def add_watched_movie():
     return jsonify({'message': 'Post added successfully'}), 200
 
 
-@app.route('/watched_movies/<int:user_id>', methods=['GET'])
-def get_watched_movies(user_id):
+@app.route('/watched_movies/<string:username>', methods=['GET'])
+def get_watched_movies(username):
     # Check if the user exists
-    user = User.query.get(user_id)
+    user = User.query.filter_by(Username=username).first()
     if not user:
         return jsonify({'message': 'User not found!'}), 404
 
     # Retrieve all watched movies for the user
-    watched_movies = WatchedMovie.query.filter_by(UserID=user_id).all()
+    watched_movies = WatchedMovie.query.filter_by(UserID=user.UserID).all()
 
     # Serialize the watched movies to JSON
     watched_movies_data = []
@@ -273,40 +342,123 @@ def get_watched_movies(user_id):
 
 @app.route('/clubs', methods=['GET'])
 def get_all_clubs():
-    # Get all movie clubs route
     clubs = Club.query.all()
-    club_list = []
 
+    genre_statements = {
+        'Action': 'Welcome to the Action Club, where adrenaline never stops!',
+        'Adventure': 'Embark on epic journeys with fellow adventurers!',
+        'Comedy': 'Laugh out loud in the funniest club around!',
+        'Drama': 'Dive deep into stories that stir your emotions.',
+        'Fantasy': 'Enter a world of magic, myths, and legends!',
+        'Horror': 'Welcome to Horror, your spookiest of clubs!',
+        'Mystery': 'Solve mysteries and uncover hidden secrets here.',
+        'Romance': 'Find love in the sweetest stories of the Romance Club!',
+        'Sci-Fi': 'Explore futuristic worlds and cutting-edge science fiction!',
+        'Thriller': 'Keep your heart racing with thrilling adventures!'
+    }
+
+    clubs_data = []
     for club in clubs:
+        # Use the `user` attribute to fetch member information
+        members = [{'UserID': member.UserID, 'Username': member.user.Username} 
+                   for member in club.members]
+
         club_data = {
             'ClubID': club.ClubID,
             'Name': club.Name,
             'Genre': club.Genre,
-            'OwnerID': club.OwnerID,
-            # Add other club attributes as needed
+            'OwnerUsername': club.owner.Username if club.owner else 'Unknown',
+            'CreatedAt': club.CreatedAt.strftime('%Y-%m-%d') if club.CreatedAt else 'Unknown',
+            'Description': genre_statements.get(club.Genre, 'Welcome to your club!'),
+            'Members': members  # Corrected members list
         }
-        club_list.append(club_data)
+        clubs_data.append(club_data)
 
-    return jsonify({'clubs': club_list}), 200
+    return jsonify({'clubs': clubs_data}), 200
+
+
+
+@app.route('/user_clubs/<string:username>', methods=['GET'])
+def get_user_clubs(username):
+    user = User.query.filter_by(Username=username).first()
+
+    if not user:
+        return jsonify({'message': 'User not found!'}), 404
+
+    user_clubs = (db.session.query(Club)
+                  .join(Membership, Membership.ClubID == Club.ClubID)
+                  .filter(Membership.UserID == user.UserID)
+                  .all())
+
+    genre_statements = {
+        'Action': 'Welcome to the Action Club, where adrenaline never stops!',
+        'Adventure': 'Embark on epic journeys with fellow adventurers!',
+        'Comedy': 'Laugh out loud in the funniest club around!',
+        'Drama': 'Dive deep into stories that stir your emotions.',
+        'Fantasy': 'Enter a world of magic, myths, and legends!',
+        'Horror': 'Welcome to Horror, your spookiest of clubs!',
+        'Mystery': 'Solve mysteries and uncover hidden secrets here.',
+        'Romance': 'Find love in the sweetest stories of the Romance Club!',
+        'Sci-Fi': 'Explore futuristic worlds and cutting-edge science fiction!',
+        'Thriller': 'Keep your heart racing with thrilling adventures!'
+    }
+
+    clubs_data = []
+    for club in user_clubs:
+        members = [{'UserID': member.UserID, 'Username': member.member.Username} 
+                   for member in club.members]
+
+        club_data = {
+            'ClubID': club.ClubID,
+            'Name': club.Name,
+            'Genre': club.Genre,
+            'OwnerUsername': club.owner.Username,
+            'Description': genre_statements.get(club.Genre, 'Welcome to your club!'),
+            'Members': members
+        }
+        clubs_data.append(club_data)
+
+    return jsonify({'clubs': clubs_data}), 200
+
+
+
 
 @app.route('/create_club', methods=['POST'])
+@jwt_required()
 def create_club():
-    # Create a movie club route
-    user = User.query.filter_by(Username=session['username']).first()
+    username = get_jwt_identity()
+    user = User.query.filter_by(Username=username).first()
     if not user:
         return jsonify({'message': 'User not found!'}), 404
 
     data = request.get_json()
-    
-    # Check if the data is a dictionary
     if not isinstance(data, dict):
         return jsonify({'message': 'Invalid data format!'}), 400
-    
-    club = Club(Name=data['club_name'], Genre=data['genre'], OwnerID=data['owner_id'])
+
+    # Check if club already exists
+    existing_club = Club.query.filter_by(Name=data['club_name']).first()
+    if existing_club:
+        return jsonify({'message': 'Club already exists!'}), 400
+
+    # Use the provided description, or set a default
+    description = data.get('description') or f"A new club for {data['genre']} lovers!"
+
+    club = Club(
+        Name=data['club_name'],
+        Genre=data['genre'],
+        OwnerID=user.UserID,
+        Description=description  # Save the description here
+    )
     db.session.add(club)
     db.session.commit()
 
+    # Automatically make the creator a member of the club
+    membership = Membership(UserID=user.UserID, ClubID=club.ClubID)
+    db.session.add(membership)
+    db.session.commit()
+
     return jsonify({'message': f'Club "{data["club_name"]}" created successfully!'}), 201
+
 
 
 @app.route('/join_clubs_by_genre/<string:genre>', methods=['POST'])
@@ -333,14 +485,69 @@ def join_clubs_by_genre(genre):
         return jsonify({'message': 'User not found!'}), 404
 
 @app.route('/join_club/<int:club_id>', methods=['POST'])
+@jwt_required()
 def join_club(club_id):
-    # Join a movie club route
-    user = User.query.filter_by(Username=session['username']).first()
+    username = get_jwt_identity()  # Get the logged-in user's username from the JWT
+    user = User.query.filter_by(Username=username).first()
     if user:
+        # Check if user is already a member
+        existing_membership = Membership.query.filter_by(UserID=user.UserID, ClubID=club_id).first()
+        if existing_membership:
+            return jsonify({'message': 'You are already a member of this club!'}), 400
+
         membership = Membership(UserID=user.UserID, ClubID=club_id)
         db.session.add(membership)
         db.session.commit()
         return jsonify({'message': 'Joined club successfully!'}), 200
+    return jsonify({'message': 'User not found!'}), 404
+
+from flask_jwt_extended import jwt_required, get_jwt_identity
+
+@app.route('/leave_club/<int:club_id>', methods=['DELETE'])
+@jwt_required()  # Ensures the route is protected
+def leave_club(club_id):
+    # Get the current user from the JWT token
+    current_user = get_jwt_identity()
+    
+    # Fetch the user from the database
+    user = User.query.filter_by(Username=current_user).first()
+    if not user:
+        return jsonify({'message': 'User not found!'}), 404
+
+    # Verify if the user is a member of the specified club
+    membership = Membership.query.filter_by(UserID=user.UserID, ClubID=club_id).first()
+    if not membership:
+        return jsonify({'message': 'You are not a member of this club!'}), 403
+
+    # Remove membership
+    db.session.delete(membership)
+    db.session.commit()
+
+    # Check if the club still has any members
+    remaining_members = Membership.query.filter_by(ClubID=club_id).count()
+    if remaining_members == 0:
+        # If no members left, delete the club
+        club = Club.query.get(club_id)
+        db.session.delete(club)
+        db.session.commit()
+        return jsonify({'message': 'You left the club, and it has been deleted since no members remain.'}), 200
+
+    return jsonify({'message': 'You have successfully left the club!'}), 200
+@app.route('/delete_club/<int:club_id>', methods=['DELETE'])
+@jwt_required()
+def delete_club(club_id):
+    username = get_jwt_identity()
+    user = User.query.filter_by(Username=username).first()
+
+    club = Club.query.filter_by(ClubID=club_id).first()
+    if club.OwnerID != user.UserID:
+        return jsonify({'message': 'Unauthorized to delete this club'}), 403
+
+    db.session.delete(club)
+    db.session.commit()
+    return jsonify({'message': 'Club deleted successfully!'}), 200
+
+
 
 
 # Posts and Interactions
@@ -364,11 +571,15 @@ def get_posts():
 
         # Count the number of likes for the post
         likes_count = len(post.likes)
+
+         # Fetch the post author's username
+        author = User.query.filter_by(UserID=post.UserID).first()
         
         # Serialize the post data including the comments and likes count
         post_data = {
             'PostID': post.PostID,
             'UserID': post.UserID,
+            'Author': author.Username if author else 'Unknown',
             'MovieID': post.MovieID,
             'Review': post.Review,
             'Rating': post.Rating,
@@ -382,87 +593,65 @@ def get_posts():
 
 
 
-@app.route('/get_user_posts/<int:user_id>', methods=['GET'])
-def get_user_posts(user_id):
-    # Get posts from a specific user route
-    user = User.query.get(user_id)
-    if user:
-        posts = Post.query.filter_by(UserID=user.UserID).all()
-        post_list = []
-        for post in posts:
-            movie = Movie.query.get(post.MovieID)
-            if movie:
-                post_data = {
-                    'PostID': post.PostID,
-                    'UserID': post.UserID,
-                    'MovieID': post.MovieID,
-                    'Title': movie.Title,
-                    'ImagePath': movie.ImagePath
-                }
-                post_list.append(post_data)
-        return jsonify({'posts': post_list}), 200
-    return jsonify({'message': 'User not found!'}), 404
+@app.route('/get_user_posts/<string:username>', methods=['GET'])
+def get_user_posts(username):
+    # Get posts and shared posts from a specific user
+    user = User.query.filter_by(Username=username).first()
+    if not user:
+        return jsonify({'message': 'User not found!'}), 404
 
-@app.route('/view_post/<int:post_id>', methods=['GET'])
-def view_post(post_id):
-    # View a post route
-    if 'username' in session:
-        user = User.query.filter_by(Username=session['username']).first()
-        if user:
-            post = Post.query.get(post_id)
-            
-            if post:
-                post_info = {
-                    'PostID': post.PostID,
-                    'Review': post.Review,
-                    'Rating': post.Rating,
-                    'ImagePath': post.ImagePath,
-                    'Author': {
-                        'UserID': post.author.UserID,
-                        'Username': post.author.Username,
-                        'ProfilePicture': post.author.ProfilePicture
-                    },
-                    'Movie': None,
-                    'Comments': [],
-                    'Likes': []
+    # Retrieve all original posts by the user
+    posts = Post.query.filter_by(UserID=user.UserID).all()
+
+    # Retrieve all shared posts by the user
+    shared_posts = SharedPost.query.filter_by(UserID=user.UserID).all()
+
+    post_list = []
+
+    # Process original posts
+    for post in posts:
+        movie = Movie.query.get(post.MovieID)
+        post_data = {
+            'PostID': post.PostID,
+            'UserID': post.UserID,
+            'MovieID': post.MovieID,
+            'Title': movie.Title if movie else 'Unknown',
+            'Review': post.Review,
+            'Rating': post.Rating,
+            'ImagePath': post.ImagePath,
+            'Author': {
+                'UserID': user.UserID,
+                'Username': user.Username,
+                'ProfilePicture': user.ProfilePicture
+            }
+        }
+        post_list.append(post_data)
+
+    # Process shared posts
+    for shared in shared_posts:
+        original_post = Post.query.get(shared.OriginalPostID)
+        if original_post:
+            movie = Movie.query.get(original_post.MovieID)
+            shared_post_data = {
+                'PostID': shared.SharedPostID,
+                'OriginalPostID': shared.OriginalPostID,
+                'UserID': shared.UserID,
+                'MovieID': original_post.MovieID,
+                'Title': movie.Title if movie else 'Unknown',
+                'Review': original_post.Review,
+                'Rating': original_post.Rating,
+                'ImagePath': original_post.ImagePath,
+                'Author': {
+                    'UserID': original_post.author.UserID,
+                    'Username': original_post.author.Username,
+                    'ProfilePicture': original_post.author.ProfilePicture
                 }
-                
-                if post.movie:
-                    post_info['Movie'] = {
-                        'MovieID': post.movie.MovieID,
-                        'Title': post.movie.Title,
-                        'Genre': post.movie.Genre,
-                        'Director': post.movie.Director,
-                        'ReleaseYear': post.movie.ReleaseYear,
-                        'Synopsis': post.movie.Synopsis,
-                        'ImagePath': post.movie.ImagePath
-                    }
-                
-                comments = Comment.query.filter_by(PostID=post.PostID).all()
-                likes = Like.query.filter_by(PostID=post.PostID).all()
-                
-                for comment in comments:
-                    post_info['Comments'].append({
-                        'CommentID': comment.CommentID,
-                        'CommentText': comment.CommentText,
-                        'Commenter': {
-                            'UserID': comment.commenter.UserID,
-                            'Username': comment.commenter.Username
-                        }
-                    })
-                
-                for like in likes:
-                    post_info['Likes'].append({
-                        'LikeID': like.LikeID,
-                        'Liker': {
-                            'UserID': like.liker.UserID,
-                            'Username': like.liker.Username
-                        }
-                    })
-                
-                return jsonify(post_info), 200
-            
-    return jsonify({'message': 'Unauthorized or post not found!'}), 401
+            }
+            post_list.append(shared_post_data)
+
+    return jsonify({'posts': post_list}), 200
+
+
 
 @app.route('/share_post/<int:post_id>', methods=['GET', 'POST'])
 def share_post(post_id):
@@ -640,76 +829,88 @@ def comment_on_post(post_id):
         return jsonify({'message': 'You must be logged in to comment!'}), 401
 
 
-from flask import jsonify
 
 @app.route('/follow_user/<int:followee_id>', methods=['POST'])
+@jwt_required()
 def follow_user(followee_id):
-    # Follow a user route
-    username = session.get('username')  # Safely get the username, returns None if not found
-    if username is None:
-        return jsonify({'error': 'You must be logged in to follow users.'}), 403
-
+    username = get_jwt_identity()  # Get logged-in user's username
     user = User.query.filter_by(Username=username).first()
 
-    if user:
-        # Check if the user is trying to follow themselves
-        if user.UserID == followee_id:
-            return jsonify({'message': "You can't follow yourself."}), 400
+    # Validate current user and prevent self-following
+    if not user or user.UserID == followee_id:
+        return jsonify({'message': "You can't follow yourself or invalid user."}), 400
 
-        # Check if the user is already following the intended user
-        existing_follow = Follow.query.filter_by(FollowerID=user.UserID, FolloweeID=followee_id).first()
-        if existing_follow:
-            return jsonify({'message': 'Sorry, you are already following this user.'}), 400
+    followee = User.query.get(followee_id)  # Ensure followee exists
+    if not followee:
+        return jsonify({'message': 'User to follow does not exist.'}), 404
 
-        follow = Follow(FollowerID=user.UserID, FolloweeID=followee_id)
-        db.session.add(follow)
-        db.session.commit()
-        return jsonify({'message': 'Followed user successfully!'}), 200
-    else:
-        # User is not found in the session, hence not logged in
-        return jsonify({'error': 'User not found.'}), 404
+    existing_follow = Follow.query.filter_by(FollowerID=user.UserID, FolloweeID=followee_id).first()
+    if existing_follow:
+        return jsonify({'message': 'You are already following this user.'}), 400
+
+    # Create new follow relationship
+    follow = Follow(FollowerID=user.UserID, FolloweeID=followee_id)
+    db.session.add(follow)
+    db.session.commit()
+
+    return jsonify({'message': 'Followed successfully!'}), 200
 
 
-# Unfollow a User
+
+# Unfollow a user
 @app.route('/unfollow_user/<int:followee_id>', methods=['DELETE'])
+@jwt_required()
 def unfollow_user(followee_id):
-    # Unfollow a user route
-    user = User.query.filter_by(Username=session['username']).first()
-    if user:
-        follow = Follow.query.filter_by(FollowerID=user.UserID, FolloweeID=followee_id).first()
-        if follow:
-            db.session.delete(follow)
-            db.session.commit()
-            return jsonify({'message': 'Unfollowed user successfully!'}), 200
-        
+    username = get_jwt_identity()
+    user = User.query.filter_by(Username=username).first()
+
+    # Validate current user
+    if not user:
+        return jsonify({'message': 'Unauthorized action.'}), 401
+
+    follow = Follow.query.filter_by(FollowerID=user.UserID, FolloweeID=followee_id).first()
+    if not follow:
+        return jsonify({'message': 'You are not following this user.'}), 404
+
+    # Delete follow relationship
+    db.session.delete(follow)
+    db.session.commit()
+    return jsonify({'message': 'Unfollowed successfully!'}), 200
+
+
+
+# Get followers count
 @app.route('/followers/<string:username>', methods=['GET'])
-def user_followers(username):
-    # Fetch the user by the provided username
+def followers_count(username):
     user = User.query.filter_by(Username=username).first()
     if not user:
         return jsonify({'message': 'User not found!'}), 404
 
-    # Count the number of followers the user has
-    followers_count = db.session.query(func.count(Follow.FollowerID)).filter(Follow.FolloweeID == user.UserID).scalar()
-    
-    return jsonify({'followers_count': followers_count}), 200
+    count = db.session.query(func.count(Follow.FollowerID)).filter(Follow.FolloweeID == user.UserID).scalar()
+    return jsonify({'followers_count': count}), 200
 
 
-from sqlalchemy import func
-
+# Get following count
 @app.route('/following/<string:username>', methods=['GET'])
-def user_following(username):
-    # Fetch the user by the provided username
+def following_count(username):
     user = User.query.filter_by(Username=username).first()
     if not user:
         return jsonify({'message': 'User not found!'}), 404
 
-    # Count the number of users the main user is following
-    following_count = db.session.query(func.count(Follow.FolloweeID)).filter(Follow.FollowerID == user.UserID).scalar()
+    count = db.session.query(func.count(Follow.FolloweeID)).filter(Follow.FollowerID == user.UserID).scalar()
+    return jsonify({'following_count': count}), 200
+
+@app.route('/follow_status/<int:followee_id>', methods=['GET'])
+@jwt_required()
+def follow_status(followee_id):
+    username = get_jwt_identity()  # Extract username from JWT
+    user = User.query.filter_by(Username=username).first()
     
-    return jsonify({'following_count': following_count}), 200
-
-
+    if user:
+        is_following = Follow.query.filter_by(FollowerID=user.UserID, FolloweeID=followee_id).first() is not None
+        return jsonify({"is_following": is_following}), 200
+    
+    return jsonify({"error": "Unauthorized!"}), 401
 
 
 
