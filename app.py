@@ -233,6 +233,50 @@ def post_movie():
 
 @app.route('/movies', methods=['GET'])
 def get_movies():
+    # Define the trailer links
+    trailer_links = {
+        1: "https://www.youtube.com/watch?v=fZ_JOBCLF-I",
+        2: "https://www.youtube.com/watch?v=XPG0MqIcby8&t=2s",
+        3: "https://www.youtube.com/watch?v=1JLUn2DFW4w",
+        4: "https://www.youtube.com/watch?v=HTLPULt0eJ4",
+        5: "https://www.youtube.com/watch?v=KydqdKKyGEk",
+        6: "https://www.youtube.com/watch?v=c43dY6Oq-L0",
+        7: "https://www.youtube.com/watch?v=5t_tgiWatvs",
+        8: "https://www.youtube.com/watch?v=zhIRbLHVD8o",
+        9: "https://www.youtube.com/watch?v=O21wD8Tzr2k",
+        10: "https://www.youtube.com/watch?v=-Bwr6LB5Dqw",
+        11: "https://www.youtube.com/watch?v=f1sbQf58B50",
+        12: "https://www.youtube.com/watch?v=A9fBCkwDW8c",
+        13: "https://www.youtube.com/watch?v=1ltiqNTYZbA",
+        14: "https://www.youtube.com/watch?v=QRmKa7vvct4",
+        15: "https://www.youtube.com/watch?v=KwFZkLucUb0",
+        16: "https://www.youtube.com/watch?v=sem0jlsojew",
+        17: "https://www.youtube.com/watch?v=nfK6UgLra7g",
+        18: "https://www.youtube.com/watch?v=tt3ahQeT_3M",
+        19: "https://www.youtube.com/watch?v=FM_MHjqPE4M",
+        20: "https://www.youtube.com/watch?v=XvHSlHhh1gk",
+        21: "https://www.youtube.com/watch?v=bDeRyQchao8",
+        22: "https://www.youtube.com/watch?v=r8pJt4dK_s4",
+        23: "https://www.youtube.com/watch?v=VQGCKyvzIM4",
+        24: "https://www.youtube.com/watch?v=23QoNhfK_qg",
+        25: "https://www.youtube.com/watch?v=aFYCQoIpGuE",
+        26: "https://www.youtube.com/watch?v=TGjbpO1toTc",
+        27: "https://www.youtube.com/watch?v=fgmZvLgVS24",
+        28: "https://www.youtube.com/watch?v=T_X8yvpZg6E",
+        29: "https://www.youtube.com/watch?v=egDYQSUEsHg",
+        30: "https://www.youtube.com/watch?v=uIYluH80idw",
+        31: "https://www.youtube.com/watch?v=O_ZRKMaNIy0",
+        32: "https://www.youtube.com/watch?v=eIm8g4IA_1Y",
+        33: "https://www.youtube.com/watch?v=K3cYa8jJ0kU",
+        34: "https://www.youtube.com/watch?v=29_gA_GDGvE",
+        35: "https://www.youtube.com/watch?v=N31JLdKmHIE",
+        36: "https://www.youtube.com/results?search_query=between+two+ferns+the+movie+trailer",
+        37: "https://www.youtube.com/watch?v=eeyMfq6v190",
+        38: "https://www.youtube.com/watch?v=RSKQ-lVsMdg",
+        39: "https://www.youtube.com/watch?v=zs2SrqLum1M",
+        40: "https://www.youtube.com/watch?v=sZSYYiATFTI"
+    }
+
     # Get all movies route
     movies = Movie.query.all()
     movie_list = []
@@ -245,32 +289,58 @@ def get_movies():
             'Director': movie.Director,
             'ReleaseYear': movie.ReleaseYear,
             'Synopsis': movie.Synopsis,
-            'ImagePath': movie.ImagePath
+            'ImagePath': movie.ImagePath,
+            'Trailer': trailer_links.get(movie.MovieID, None)  # Add trailer if available
         }
         movie_list.append(movie_data)
 
     return jsonify({'movies': movie_list}), 200
 
+
 # Track a Watched Movie
 @app.route('/add_watched_movie', methods=['POST'])
-def track_movie():
-    # Track a watched movie route
-    user = User.query.filter_by(Username=session['username']).first()
-    if user:
-        data = request.get_json()
-        movie = Movie.query.get(data['movie_id'])  # Query the Movie entity by movie_id
-        if not movie:
-            return jsonify({'message': 'Movie not found!'}), 404
-        # Use the image path from the queried movie
-        image_path = movie.ImagePath
-        watched_movie = WatchedMovie(UserID=user.UserID, MovieID=data['movie_id'], ImagePath=image_path)
-        db.session.add(watched_movie)
-        db.session.commit()
-        return jsonify({'message': 'Movie added to watched movies successfully!'}), 200
+@jwt_required()
+def add_watched_movie():
+    username = get_jwt_identity()  # Extract username from JWT
+    user = User.query.filter_by(Username=username).first()
+
+    if not user:
+        return jsonify({'message': 'User not found!'}), 404
+
+    # Parse the request JSON to get the movie ID
+    data = request.get_json()
+    movie_id = data.get('movie_id')
+
+    # Debugging: Print the received movie ID and username
+    print(f"Username: {username}")
+    print(f"Received movie_id: {movie_id}")
+
+    if not movie_id:
+        return jsonify({'message': 'Movie ID is required!'}), 400
+
+    # Check if the movie exists
+    movie = Movie.query.get(movie_id)
+    if not movie:
+        return jsonify({'message': 'Movie not found!'}), 404
+
+    # Check if the movie is already in the user's watchlist
+    existing_watched_movie = WatchedMovie.query.filter_by(
+        UserID=user.UserID, MovieID=movie.MovieID
+    ).first()
+    if existing_watched_movie:
+        return jsonify({'message': 'Movie is already in your watchlist!'}), 409
+
+    # Add the movie to the user's watched movies
+    watched_movie = WatchedMovie(UserID=user.UserID, MovieID=movie.MovieID, ImagePath=movie.ImagePath)
+    db.session.add(watched_movie)
+    db.session.commit()
+
+    return jsonify({'message': 'Movie added to watched movies successfully!'}), 201
+
 
 
 @app.route('/post_watched_movie', methods=['POST'])
-def add_watched_movie():
+def watched_movie():
     # Add a watched movie as a post route
     if 'username' not in session:
         return jsonify({'message': 'You must be logged in to add watched movies as posts!'}), 401
@@ -405,22 +475,21 @@ def get_user_clubs(username):
 
     clubs_data = []
     for club in user_clubs:
-        members = [{'UserID': member.UserID, 'Username': member.member.Username} 
+        members = [{'UserID': member.UserID, 'Username': member.user.Username} 
                    for member in club.members]
 
         club_data = {
             'ClubID': club.ClubID,
             'Name': club.Name,
             'Genre': club.Genre,
-            'OwnerUsername': club.owner.Username,
+            'OwnerUsername': club.owner.Username if club.owner else 'Unknown',
+            'CreatedAt': club.CreatedAt.strftime('%Y-%m-%d') if club.CreatedAt else 'Unknown',
             'Description': genre_statements.get(club.Genre, 'Welcome to your club!'),
             'Members': members
         }
         clubs_data.append(club_data)
 
     return jsonify({'clubs': clubs_data}), 200
-
-
 
 
 @app.route('/create_club', methods=['POST'])
@@ -554,10 +623,12 @@ def delete_club(club_id):
 
 @app.route('/posts', methods=['GET'])
 def get_posts():
-    # Get all posts route
     posts = Post.query.all()
     post_list = []
     for post in posts:
+        # Fetch the movie associated with the post
+        movie = Movie.query.get(post.MovieID)
+
         # Serialize comments including the username of the commenter
         comments_list = []
         for comment in post.comments:
@@ -566,21 +637,23 @@ def get_posts():
                 comments_list.append({
                     'Username': user.Username,
                     'CommentText': comment.CommentText
-                      # Fetch the Username from the User model
                 })
 
         # Count the number of likes for the post
         likes_count = len(post.likes)
 
-         # Fetch the post author's username
+        # Fetch the post author's username
         author = User.query.filter_by(UserID=post.UserID).first()
-        
-        # Serialize the post data including the comments and likes count
+
+        # Serialize the post data including the movie, comments, and likes count
         post_data = {
             'PostID': post.PostID,
             'UserID': post.UserID,
             'Author': author.Username if author else 'Unknown',
             'MovieID': post.MovieID,
+            'MovieTitle': movie.Title if movie else 'Unknown',
+            'Director': movie.Director if movie else 'Unknown',
+            'Genre': movie.Genre if movie else 'Unknown',
             'Review': post.Review,
             'Rating': post.Rating,
             'ImagePath': post.ImagePath,
@@ -591,6 +664,17 @@ def get_posts():
         
     return jsonify({'posts': post_list}), 200
 
+@app.route('/rate_post/<int:post_id>', methods=['POST'])
+@jwt_required()
+def rate_post(post_id):
+    data = request.get_json()
+    rating = data.get('rating')
+    post = Post.query.get(post_id)
+    if post:
+        post.Rating = rating
+        db.session.commit()
+        return jsonify({'message': 'Post rated successfully!'}), 200
+    return jsonify({'message': 'Post not found!'}), 404
 
 
 @app.route('/get_user_posts/<string:username>', methods=['GET'])
@@ -654,179 +738,129 @@ def get_user_posts(username):
 
 
 @app.route('/share_post/<int:post_id>', methods=['GET', 'POST'])
+@jwt_required()
 def share_post(post_id):
-    # Share a post route
-    if request.method == 'GET':
-        # Fetch the post by its ID
-        post = Post.query.get(post_id)
-
-        if post:
-            # Prepare the detailed post information
-            post_info = {
-                'PostID': post.PostID,
-                'Review': post.Review,
-                'Rating': post.Rating,
-                'ImagePath': post.ImagePath,
-                'Author': {
-                    'UserID': post.author.UserID,
-                    'Username': post.author.Username,
-                    'ProfilePicture': post.author.ProfilePicture
-                },
-                'Movie': None,
-                'Comments': [],
-                'Likes': []
-            }
-
-            # If the post is related to a movie, include movie information
-            if post.movie:
-                post_info['Movie'] = {
-                    'MovieID': post.movie.MovieID,
-                    'Title': post.movie.Title,
-                    'Genre': post.movie.Genre,
-                    'Director': post.movie.Director,
-                    'ReleaseYear': post.movie.ReleaseYear,
-                    'Synopsis': post.movie.Synopsis,
-                    'ImagePath': post.movie.ImagePath
-                }
-
-            # Fetch and include comments and likes associated with the post
-            comments = Comment.query.filter_by(PostID=post.PostID).all()
-            likes = Like.query.filter_by(PostID=post.PostID).all()
-
-            for comment in comments:
-                post_info['Comments'].append({
-                    'CommentID': comment.CommentID,
-                    'CommentText': comment.CommentText,
-                    'Commenter': {
-                        'UserID': comment.commenter.UserID,
-                        'Username': comment.commenter.Username
-                    }
-                })
-
-            for like in likes:
-                post_info['Likes'].append({
-                    'LikeID': like.LikeID,
-                    'Liker': {
-                        'UserID': like.liker.UserID,
-                        'Username': like.liker.Username
-                    }
-                })
-
-            return jsonify(post_info), 200
-
-        return jsonify({'message': 'Post not found!'}), 404
-
-    elif request.method == 'POST':
-        # Check if the user is authenticated
-        if 'username' not in session:
-            return jsonify({'message': 'You must be logged in to share posts!'}), 401
-
-    user = User.query.filter_by(Username=session['username']).first()
+    username = get_jwt_identity()  # Extract username from the JWT token
+    user = User.query.filter_by(Username=username).first()
     if not user:
-        return jsonify({'message': 'User not found!'}), 404
+        return jsonify({'message': 'Unauthorized'}), 401
 
-    # Check if the post with the specified post_id exists
     post = Post.query.get(post_id)
     if not post:
         return jsonify({'message': 'Post not found!'}), 404
 
-    # Create a new shared post for the user with all columns of the original post
-    shared_post = SharedPost(
-        UserID=user.UserID,
-        OriginalPostID=post.PostID  # Link the shared post to the original post
-    )
-    db.session.add(shared_post)
-    db.session.commit()
-
-    # Include all columns from the original post in the response
-    shared_post_info = {
-        'SharedPostID': shared_post.SharedPostID,
-        'UserID': shared_post.UserID,
-        'OriginalPostID': shared_post.OriginalPostID,
-        # Include other columns from the original post here
-        'Review': post.Review,
-        'Rating': post.Rating,
-        'ImagePath': post.ImagePath,
-        'Author': {
-            'UserID': post.author.UserID,
-            'Username': post.author.Username,
-            'ProfilePicture': post.author.ProfilePicture
-        },
-        'Movie': None,
-        'Comments': [],
-        'Likes': []
-    }
-
-    # If the post is related to a movie, include movie information
-    if post.movie:
-        shared_post_info['Movie'] = {
-            'MovieID': post.movie.MovieID,
-            'Title': post.movie.Title,
-            'Genre': post.movie.Genre,
-            'Director': post.movie.Director,
-            'ReleaseYear': post.movie.ReleaseYear,
-            'Synopsis': post.movie.Synopsis,
-            'ImagePath': post.movie.ImagePath
+    if request.method == 'GET':
+        # Prepare the detailed post information
+        post_info = {
+            'PostID': post.PostID,
+            'Review': post.Review,
+            'Rating': post.Rating,
+            'ImagePath': post.ImagePath,
+            'Author': {
+                'UserID': post.author.UserID,
+                'Username': post.author.Username,
+                'ProfilePicture': post.author.ProfilePicture
+            },
+            'Movie': None,
+            'Comments': [],
+            'Likes': []
         }
 
-    # Fetch and include comments and likes associated with the original post
-    comments = Comment.query.filter_by(PostID=post.PostID).all()
-    likes = Like.query.filter_by(PostID=post.PostID).all()
-
-    for comment in comments:
-        shared_post_info['Comments'].append({
-            'CommentID': comment.CommentID,
-            'CommentText': comment.CommentText,
-            'Commenter': {
-                'UserID': comment.commenter.UserID,
-                'Username': comment.commenter.Username
+        # If the post is related to a movie, include movie information
+        if post.movie:
+            post_info['Movie'] = {
+                'MovieID': post.movie.MovieID,
+                'Title': post.movie.Title,
+                'Genre': post.movie.Genre,
+                'Director': post.movie.Director,
+                'ReleaseYear': post.movie.ReleaseYear,
+                'Synopsis': post.movie.Synopsis,
+                'ImagePath': post.movie.ImagePath
             }
-        })
 
-    for like in likes:
-        shared_post_info['Likes'].append({
-            'LikeID': like.LikeID,
-            'Liker': {
-                'UserID': like.liker.UserID,
-                'Username': like.liker.Username
-            }
-        })
+        # Fetch and include comments and likes associated with the post
+        comments = Comment.query.filter_by(PostID=post.PostID).all()
+        likes = Like.query.filter_by(PostID=post.PostID).all()
 
-    return jsonify(shared_post_info), 201
+        for comment in comments:
+            post_info['Comments'].append({
+                'CommentID': comment.CommentID,
+                'CommentText': comment.CommentText,
+                'Commenter': {
+                    'UserID': comment.commenter.UserID,
+                    'Username': comment.commenter.Username
+                }
+            })
+
+        for like in likes:
+            post_info['Likes'].append({
+                'LikeID': like.LikeID,
+                'Liker': {
+                    'UserID': like.liker.UserID,
+                    'Username': like.liker.Username
+                }
+            })
+
+        return jsonify(post_info), 200
+
+    elif request.method == 'POST':
+        # Check if the user has already shared the post
+        existing_share = SharedPost.query.filter_by(
+            UserID=user.UserID, OriginalPostID=post.PostID).first()
+        if existing_share:
+            return jsonify({'message': 'You have already shared this post!'}), 400
+
+        # Create a new shared post
+        shared_post = SharedPost(
+            UserID=user.UserID,
+            OriginalPostID=post.PostID  # Link the shared post to the original post
+        )
+        db.session.add(shared_post)
+        db.session.commit()
+
+        return jsonify({'message': 'Post shared successfully!'}), 201
 
 # Like a Post
 @app.route('/like_post/<int:post_id>', methods=['POST'])
+@jwt_required()
 def like_post(post_id):
-    # Like a post route
-    if 'username' in session:
-        user = User.query.filter_by(Username=session['username']).first()
-        if user:
-            post = Post.query.get(post_id)
-            if post:
-                like = Like(PostID=post.PostID, UserID=user.UserID)
-                db.session.add(like)
-                db.session.commit()
-                return jsonify({'message': 'Liked post successfully!'}), 200
-            return jsonify({'message': 'Post not found!'}), 404
-        return jsonify({'message': 'User not found!'}), 404
-    else:
-        return jsonify({'message': 'You must be logged in to like a post!'}), 401
+    username = get_jwt_identity()  # Get logged-in user
+    user = User.query.filter_by(Username=username).first()
+    if not user:
+        return jsonify({'message': 'Unauthorized'}), 401
 
-# Comment on a Post
+    post = Post.query.get(post_id)
+    if post:
+        # Check if the user already liked the post
+        existing_like = Like.query.filter_by(PostID=post_id, UserID=user.UserID).first()
+        if existing_like:
+            return jsonify({'message': 'You already liked this post!'}), 400
+
+        like = Like(PostID=post_id, UserID=user.UserID)
+        db.session.add(like)
+        db.session.commit()
+        return jsonify({'message': 'Liked post successfully!'}), 200
+    return jsonify({'message': 'Post not found!'}), 404
+
+
 @app.route('/comment_on_post/<int:post_id>', methods=['POST'])
+@jwt_required()
 def comment_on_post(post_id):
-    # Comment on a post route
-    if 'username' in session:
-        user = User.query.filter_by(Username=session['username']).first()
-        if user:
-            data = request.get_json()
-            comment = Comment(PostID=post_id, UserID=user.UserID, CommentText=data['comment_text'])
-            db.session.add(comment)
-            db.session.commit()
-            return jsonify({'message': 'Commented successfully!'}), 200
-        return jsonify({'message': 'User not found!'}), 404
-    else:
-        return jsonify({'message': 'You must be logged in to comment!'}), 401
+    username = get_jwt_identity()  # Get logged-in user
+    user = User.query.filter_by(Username=username).first()
+    if not user:
+        return jsonify({'message': 'Unauthorized'}), 401
+
+    data = request.get_json()
+    comment_text = data.get('comment_text', '')
+
+    post = Post.query.get(post_id)
+    if post:
+        comment = Comment(PostID=post_id, UserID=user.UserID, CommentText=comment_text)
+        db.session.add(comment)
+        db.session.commit()
+        return jsonify({'message': 'Commented successfully!'}), 200
+    return jsonify({'message': 'Post not found!'}), 404
 
 
 
