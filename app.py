@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, session
+from flask import Flask, json, jsonify, request, session
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import JWTManager, create_access_token
 from Models import *
@@ -10,6 +10,8 @@ from flask_migrate import Migrate
 from flask import make_response
 import logging
 from flask_jwt_extended import jwt_required, get_jwt_identity
+import os
+from werkzeug.utils import secure_filename
 
 
 
@@ -408,30 +410,33 @@ def get_watched_movies(username):
 
     return jsonify({'watched_movies': watched_movies_data}), 200
 
+@app.route('/movies_by_genre/<string:genre>', methods=['GET'])
+def get_movies_by_genre(genre):
+    # Use SQLAlchemy's `like` filter to search for movies that include the genre
+    search_pattern = f"%{genre}%"  # Match genres containing the provided genre
+    movies = Movie.query.filter(Movie.Genre.like(search_pattern)).all()
+    
+    # Handle the case where no movies match the genre
+    if not movies:
+        return jsonify({'movies': []}), 200
+    
+    # Prepare movie data for the response
+    movies_data = [{'MovieID': movie.MovieID, 'Title': movie.Title} for movie in movies]
+    
+    return jsonify({'movies': movies_data}), 200
+
+
+
 # Movie Clubs
 
 @app.route('/clubs', methods=['GET'])
 def get_all_clubs():
     clubs = Club.query.all()
 
-    genre_statements = {
-        'Action': 'Welcome to the Action Club, where adrenaline never stops!',
-        'Adventure': 'Embark on epic journeys with fellow adventurers!',
-        'Comedy': 'Laugh out loud in the funniest club around!',
-        'Drama': 'Dive deep into stories that stir your emotions.',
-        'Fantasy': 'Enter a world of magic, myths, and legends!',
-        'Horror': 'Welcome to Horror, your spookiest of clubs!',
-        'Mystery': 'Solve mysteries and uncover hidden secrets here.',
-        'Romance': 'Find love in the sweetest stories of the Romance Club!',
-        'Sci-Fi': 'Explore futuristic worlds and cutting-edge science fiction!',
-        'Thriller': 'Keep your heart racing with thrilling adventures!'
-    }
-
     clubs_data = []
     for club in clubs:
-        # Use the `user` attribute to fetch member information
-        members = [{'UserID': member.UserID, 'Username': member.user.Username} 
-                   for member in club.members]
+        members = [{'UserID': member.UserID, 'Username': member.user.Username} for member in club.members]
+        movies = [{'MovieID': movie.MovieID, 'Title': movie.Title} for movie in club.movies]  # Add movies
 
         club_data = {
             'ClubID': club.ClubID,
@@ -439,13 +444,14 @@ def get_all_clubs():
             'Genre': club.Genre,
             'OwnerUsername': club.owner.Username if club.owner else 'Unknown',
             'CreatedAt': club.CreatedAt.strftime('%Y-%m-%d') if club.CreatedAt else 'Unknown',
-            'Description': genre_statements.get(club.Genre, 'Welcome to your club!'),
-            'Members': members  # Corrected members list
+            'Description': club.Description,
+            'ImageURL': club.ImageURL,  # Include the image URL
+            'Members': members,
+            'Movies': movies  # Add movies to the response
         }
         clubs_data.append(club_data)
 
     return jsonify({'clubs': clubs_data}), 200
-
 
 
 @app.route('/user_clubs/<string:username>', methods=['GET'])
@@ -460,23 +466,11 @@ def get_user_clubs(username):
                   .filter(Membership.UserID == user.UserID)
                   .all())
 
-    genre_statements = {
-        'Action': 'Welcome to the Action Club, where adrenaline never stops!',
-        'Adventure': 'Embark on epic journeys with fellow adventurers!',
-        'Comedy': 'Laugh out loud in the funniest club around!',
-        'Drama': 'Dive deep into stories that stir your emotions.',
-        'Fantasy': 'Enter a world of magic, myths, and legends!',
-        'Horror': 'Welcome to Horror, your spookiest of clubs!',
-        'Mystery': 'Solve mysteries and uncover hidden secrets here.',
-        'Romance': 'Find love in the sweetest stories of the Romance Club!',
-        'Sci-Fi': 'Explore futuristic worlds and cutting-edge science fiction!',
-        'Thriller': 'Keep your heart racing with thrilling adventures!'
-    }
-
     clubs_data = []
     for club in user_clubs:
-        members = [{'UserID': member.UserID, 'Username': member.user.Username} 
+        members = [{'UserID': member.UserID, 'Username': member.user.Username}
                    for member in club.members]
+        movies = [{'MovieID': movie.MovieID, 'Title': movie.Title} for movie in club.movies]
 
         club_data = {
             'ClubID': club.ClubID,
@@ -484,51 +478,82 @@ def get_user_clubs(username):
             'Genre': club.Genre,
             'OwnerUsername': club.owner.Username if club.owner else 'Unknown',
             'CreatedAt': club.CreatedAt.strftime('%Y-%m-%d') if club.CreatedAt else 'Unknown',
-            'Description': genre_statements.get(club.Genre, 'Welcome to your club!'),
-            'Members': members
+            'Description': club.Description,
+            'ImageURL': club.ImageURL,
+            'Members': members,
+            'Movies': movies
         }
         clubs_data.append(club_data)
 
     return jsonify({'clubs': clubs_data}), 200
 
+from datetime import datetime
 
 @app.route('/create_club', methods=['POST'])
 @jwt_required()
 def create_club():
     username = get_jwt_identity()
     user = User.query.filter_by(Username=username).first()
+
     if not user:
         return jsonify({'message': 'User not found!'}), 404
 
-    data = request.get_json()
-    if not isinstance(data, dict):
-        return jsonify({'message': 'Invalid data format!'}), 400
+    try:
+        data = request.form
+        club_name = data.get('club_name')
+        genre = data.get('genre')
+        description = data.get('description', f"A new club for {genre} lovers!")
+        image_url = data.get('image_url')  # Optional external URL
+        movie_ids = json.loads(data.get('movies', '[]'))
 
-    # Check if club already exists
-    existing_club = Club.query.filter_by(Name=data['club_name']).first()
-    if existing_club:
-        return jsonify({'message': 'Club already exists!'}), 400
+        if not club_name or not genre:
+            return jsonify({'message': 'Club name and genre are required!'}), 400
 
-    # Use the provided description, or set a default
-    description = data.get('description') or f"A new club for {data['genre']} lovers!"
+        # Ensure the uploads directory exists
+        upload_folder = 'static/uploads'
+        if not os.path.exists(upload_folder):
+            os.makedirs(upload_folder)
 
-    club = Club(
-        Name=data['club_name'],
-        Genre=data['genre'],
-        OwnerID=user.UserID,
-        Description=description  # Save the description here
-    )
-    db.session.add(club)
-    db.session.commit()
+        # Handle local image upload
+        if 'image' in request.files:
+            image = request.files['image']
+            filename = secure_filename(image.filename)
+            file_path = os.path.join(upload_folder, filename)
+            image.save(file_path)
+            image_url = f"{request.host_url}{file_path}"  # Construct full URL for serving
 
-    # Automatically make the creator a member of the club
-    membership = Membership(UserID=user.UserID, ClubID=club.ClubID)
-    db.session.add(membership)
-    db.session.commit()
+        # Prevent duplicate club creation
+        existing_club = Club.query.filter_by(Name=club_name).first()
+        if existing_club:
+            return jsonify({'message': 'Club already exists!'}), 400
 
-    return jsonify({'message': f'Club "{data["club_name"]}" created successfully!'}), 201
+        # Create the club
+        club = Club(
+            Name=club_name,
+            Genre=genre,
+            OwnerID=user.UserID,
+            Description=description,
+            ImageURL=image_url,
+        )
+        db.session.add(club)
+        db.session.commit()
 
+        # Add movies to the club
+        for movie_id in movie_ids:
+            movie = Movie.query.get(movie_id)
+            if movie:
+                club.movies.append(movie)
 
+        # Add owner membership
+        membership = Membership(UserID=user.UserID, ClubID=club.ClubID)
+        db.session.add(membership)
+
+        db.session.commit()
+        return jsonify({'message': f'Club "{club_name}" created successfully!', 'club_id': club.ClubID}), 201
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': 'Failed to create club!', 'error': str(e)}), 500
 
 @app.route('/join_clubs_by_genre/<string:genre>', methods=['POST'])
 def join_clubs_by_genre(genre):
@@ -615,8 +640,94 @@ def delete_club(club_id):
     db.session.delete(club)
     db.session.commit()
     return jsonify({'message': 'Club deleted successfully!'}), 200
+@app.route('/edit_club/<int:club_id>', methods=['PUT'])
+@jwt_required()
+def edit_club(club_id):
+    current_user = get_jwt_identity()
+    user = User.query.filter_by(Username=current_user).first()
 
+    if not user:
+        return jsonify({'message': 'User not found!'}), 404
 
+    club = Club.query.filter_by(ClubID=club_id).first()
+
+    if not club:
+        return jsonify({'message': 'Club not found!'}), 404
+
+    if club.OwnerID != user.UserID:
+        return jsonify({'message': 'Unauthorized to edit this club!'}), 403
+
+    data = request.form
+    club.Name = data.get('club_name', club.Name)
+    club.Genre = data.get('genre', club.Genre)
+    club.Description = data.get('description', club.Description)
+
+    # Ensure the uploads directory exists
+    upload_folder = 'static/uploads'
+    if not os.path.exists(upload_folder):
+        os.makedirs(upload_folder)
+
+    # Handle image file upload
+    if 'image' in request.files:
+        image_file = request.files['image']
+        if image_file:
+            filename = secure_filename(image_file.filename)
+            image_path = os.path.join(upload_folder, filename)
+            image_file.save(image_path)
+            club.ImageURL = f"{request.host_url}{image_path}"  # Generate a public URL for the image
+
+    # Handle external image URL
+    elif data.get('image_url'):
+        club.ImageURL = data.get('image_url')
+
+    # Handle movie updates
+    movie_ids = json.loads(data.get('movies', '[]'))
+    club.movies = []  # Clear existing movie associations
+    for movie_id in movie_ids:
+        movie = Movie.query.get(movie_id)
+        if movie:
+            club.movies.append(movie)
+
+    try:
+        db.session.commit()
+        return jsonify({
+            'message': 'Club updated successfully!',
+            'updated_club': {
+                'ClubID': club.ClubID,
+                'Name': club.Name,
+                'Genre': club.Genre,
+                'Description': club.Description,
+                'ImageURL': club.ImageURL,
+                'Movies': [movie.Title for movie in club.movies],
+            }
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': 'Failed to update club.', 'error': str(e)}), 500
+
+@app.route('/remove_member/<int:club_id>/<int:user_id>', methods=['DELETE'])
+@jwt_required()
+def remove_member(club_id, user_id):
+    username = get_jwt_identity()
+
+    # Fetch the club and check ownership
+    club = Club.query.get(club_id)
+    if not club or club.owner.Username != username:
+        return jsonify({'message': 'Only the club owner can remove members!'}), 403
+
+    # Prevent removing the club owner
+    if club.owner.UserID == user_id:
+        return jsonify({'message': 'You cannot remove the club owner!'}), 400
+
+    # Remove the member
+    membership = Membership.query.filter_by(ClubID=club_id, UserID=user_id).first()
+    if not membership:
+        return jsonify({'message': 'Member not found in the club!'}), 404
+
+    db.session.delete(membership)
+    db.session.commit()
+
+    return jsonify({'message': 'Member removed successfully!'}), 200
 
 
 # Posts and Interactions
@@ -946,7 +1057,54 @@ def follow_status(followee_id):
     
     return jsonify({"error": "Unauthorized!"}), 401
 
+@app.route('/followers_list/<string:username>', methods=['GET'])
+def get_followers_list(username):
+    # Fetch the user by their username
+    user = User.query.filter_by(Username=username).first()
+    if not user:
+        return jsonify({'message': 'User not found!'}), 404
 
+    # Query to find followers
+    followers = (db.session.query(User)
+                 .join(Follow, Follow.FollowerID == User.UserID)  # Join on FollowerID
+                 .filter(Follow.FolloweeID == user.UserID)  # Match FolloweeID to the user's ID
+                 .all())
+    
+    # Serialize the followers data
+    followers_data = [
+        {
+            'UserID': f.UserID,
+            'Username': f.Username,
+            'ProfilePicture': f.ProfilePicture
+        }
+        for f in followers
+    ]
+    return jsonify({'followers': followers_data}), 200
+
+
+@app.route('/following_list/<string:username>', methods=['GET'])
+def get_following_list(username):
+    # Fetch the user by their username
+    user = User.query.filter_by(Username=username).first()
+    if not user:
+        return jsonify({'message': 'User not found!'}), 404
+
+    # Query to find users the current user is following
+    following = (db.session.query(User)
+                 .join(Follow, Follow.FolloweeID == User.UserID)  # Join on FolloweeID
+                 .filter(Follow.FollowerID == user.UserID)  # Match FollowerID to the user's ID
+                 .all())
+    
+    # Serialize the following data
+    following_data = [
+        {
+            'UserID': f.UserID,
+            'Username': f.Username,
+            'ProfilePicture': f.ProfilePicture
+        }
+        for f in following
+    ]
+    return jsonify({'following': following_data}), 200
 
 if __name__ == '__main__':
     app.run(debug=True)

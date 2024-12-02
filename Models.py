@@ -1,7 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 
-
 db = SQLAlchemy()
 
 class User(db.Model):
@@ -15,12 +14,18 @@ class User(db.Model):
     ContactDetails = db.Column(db.String(255))
 
     posts = db.relationship('Post', backref='author')
-    clubs_owned = db.relationship('Club', backref='owner')
-    memberships = db.relationship('Membership', back_populates='user')  
+    clubs_owned = db.relationship('Club', back_populates='owner', cascade='all, delete-orphan')  # Fixed
+    memberships = db.relationship('Membership', back_populates='user')
     movies_watched = db.relationship('WatchedMovie', backref='viewer')
     comments = db.relationship('Comment', backref='commenter')
     likes = db.relationship('Like', backref='liker')
     notifications = db.relationship('Notification', backref='receiver')
+
+club_movies = db.Table(
+    'club_movies',
+    db.Column('ClubID', db.Integer, db.ForeignKey('clubs.ClubID', ondelete="CASCADE"), primary_key=True),
+    db.Column('MovieID', db.Integer, db.ForeignKey('movies.MovieID', ondelete="CASCADE"), primary_key=True)
+)
 
 class Movie(db.Model):
     __tablename__ = 'movies'
@@ -51,14 +56,18 @@ class Club(db.Model):
     __tablename__ = 'clubs'
     ClubID = db.Column(db.Integer, primary_key=True)
     Name = db.Column(db.String(255), nullable=False)
-    Genre = db.Column(db.String(255))
+    Genre = db.Column(db.String(255), nullable=False)
     OwnerID = db.Column(db.Integer, db.ForeignKey('users.UserID', name='fk_clubs_users'), nullable=False)
-    CreatedAt = db.Column(db.DateTime, default=datetime.utcnow)  # Add this line
-    Description = db.Column(db.Text, nullable=True)  # Add this line
+    CreatedAt = db.Column(db.DateTime, default=datetime.utcnow)
+    Description = db.Column(db.Text, nullable=True)
+    ImageURL = db.Column(db.String(255), nullable=True)
 
-
+    # Relationships
     members = db.relationship('Membership', back_populates='club', cascade='all, delete-orphan')
+    owner = db.relationship('User', back_populates='clubs_owned')  # Fixed relationship
+    movies = db.relationship('Movie', secondary=club_movies, backref='clubs')  # Many-to-Many Relationship
 
+    
 class Membership(db.Model):
     __tablename__ = 'memberships'
     UserID = db.Column(db.Integer, db.ForeignKey('users.UserID', name='fk_memberships_users'), primary_key=True)
@@ -71,6 +80,9 @@ class Follow(db.Model):
     __tablename__ = 'follows'
     FollowerID = db.Column(db.Integer, db.ForeignKey('users.UserID', name='fk_follows_users_follower'), primary_key=True)
     FolloweeID = db.Column(db.Integer, db.ForeignKey('users.UserID', name='fk_follows_users_followee'), primary_key=True)
+# Define association table BEFORE the Club and Movie models
+
+
 
 class WatchedMovie(db.Model):
     __tablename__ = 'watched_movies'
@@ -121,5 +133,3 @@ class PrivatePost(db.Model):
 
     user = db.relationship('User', backref='private_posts')
     movie = db.relationship('Movie', backref='private_posts')
-
-
