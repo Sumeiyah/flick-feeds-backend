@@ -1,6 +1,6 @@
 from flask import Flask, jsonify, request, session
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_jwt_extended import JWTManager, create_access_token
+from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity, jwt_required
 from Models import *
 from flask_jwt_extended import create_access_token
 from flask_cors import CORS
@@ -9,7 +9,13 @@ from sqlalchemy.orm.exc import NoResultFound
 from flask_migrate import Migrate
 
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:3000"], methods=['GET', 'POST', 'PATCH', 'DELETE','PUT'], allow_headers=['Authorization', 'Content-Type', 'x-access-token'])
+CORS(app,
+     supports_credentials=True,
+     origins="http://localhost:3000",  # Use only one origin when credentials are enabled
+     methods=['GET', 'POST', 'PATCH', 'DELETE', 'PUT', 'OPTIONS'],
+     allow_headers=['Authorization', 'Content-Type', 'x-access-token'],
+     expose_headers=['Authorization']
+)
 app.config['SECRET_KEY'] = 'c9cb13901b374ed2b4d9735e0e0a5fde'
 app.config['JWT_SECRET_KEY'] = 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI1NzM1YWI0MTc4OTlhOWNmMWU3Y2I4YWE1NWEzOWZiMyIsInN1YiI6IjY1M2E3YzEzOGEwZTliMDE0ZTAxMDVkMyIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.sOUXsDXdzl34G4Vmhx59ToCqMpkOxFSfrsB8xcxGVEo'  
 jwt = JWTManager(app)
@@ -19,10 +25,10 @@ db.init_app(app)
 
 # Your models from the previous answer...
 
+
 # User Authentication and Profile Management
 @app.route('/register', methods=['POST'])
 def register():
-    # User registration route
     data = request.get_json()
     
     # Check if user already exists
@@ -46,52 +52,59 @@ def register():
     # Ensure the Username is a string
     username_str = str(new_user.Username)
 
+    # Add username to session
+    session['username'] = username_str
+
     # Create a token for the new user
     access_token = create_access_token(identity=username_str)
 
-    # Explicitly converting token to string if it's not already
-    access_token_str = access_token.decode('utf-8') if isinstance(access_token, bytes) else access_token
-
     return jsonify({
         'message': 'Registration Successful!',
-        'access_token': access_token_str
+        'access_token': access_token,
+        'username': username_str  # Return username as part of the response
     }), 201
 
 
 @app.route('/login', methods=['POST'])
 def login():
-    # User login route
     data = request.get_json()
     user = User.query.filter_by(Username=data['username']).first()
     
     if user and check_password_hash(user.Password, data['password']):
-        # Ensure the Username is a string
-        username_str = str(user.Username)
+        # Set the username in the session
+        session['username'] = user.Username
 
-        # Add username to session
-        session['username'] = username_str
+        # Generate token and return full user details
+        access_token = create_access_token(identity=user.Username)
 
-        # Create a new token with the user identity inside
-        access_token = create_access_token(identity=username_str)
-
-        # Explicitly converting token to string if it's not already
-        access_token_str = str(access_token)
+        # Log the success message and access token to the backend terminal
+        app.logger.info(f"Login Successful for {user.Username}")
+        app.logger.info(f"Access Token: {access_token}")
 
         return jsonify({
             'message': 'Login Successful!',
-            'access_token': access_token_str
+            'access_token': access_token,
+            'user': {
+                'UserID': user.UserID,
+                'Username': user.Username,
+                'Email': user.Email,
+                'ProfilePicture': user.ProfilePicture,
+                'Bio': user.Bio,
+                'ContactDetails': user.ContactDetails
+            }
         }), 200
     else:
-        # Clear the username from session in case of failed authentication
+        # Ensure no leftover session data
         session.pop('username', None)
-        
         return jsonify({'error': 'Invalid Credentials!'}), 401
 
+
 @app.route('/profile/<string:username>', methods=['GET'])
+@jwt_required()
 def profile_by_username(username):
-    # View user profile by username route
+    current_user = get_jwt_identity()
     user = User.query.filter_by(Username=username).first()
-    if user:
+    if user and current_user == username:
         return jsonify({
             'UserID': user.UserID,
             'Username': user.Username,
@@ -99,9 +112,10 @@ def profile_by_username(username):
             'ProfilePicture': user.ProfilePicture,
             'Bio': user.Bio,
             'ContactDetails': user.ContactDetails
-            # Add other user attributes as needed
         }), 200
-    return jsonify({'message': 'User not found!'}), 404
+    return jsonify({'message': 'User not found or unauthorized!'}), 404
+
+
 
 
 @app.route('/update_profile/<int:user_id>', methods=['PUT'])
