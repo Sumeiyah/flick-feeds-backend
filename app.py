@@ -11,8 +11,10 @@ from flask_migrate import Migrate
 app = Flask(__name__)
 CORS(app,
      supports_credentials=True,
-     origins="http://localhost:3000, https://flick-feeds-frontend.onrender.com",  # Use only one origin when credentials are enabled
-     methods=['GET', 'POST', 'PATCH', 'DELETE', 'PUT', 'OPTIONS'],
+origins=[
+        "http://localhost:3000",                     # for local dev
+        "https://flick-feeds-frontend.onrender.com"  # deployed frontend
+    ],     methods=['GET', 'POST', 'PATCH', 'DELETE', 'PUT', 'OPTIONS'],
      allow_headers=['Authorization', 'Content-Type', 'x-access-token'],
      expose_headers=['Authorization']
 )
