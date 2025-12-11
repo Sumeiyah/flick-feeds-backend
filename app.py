@@ -731,6 +731,75 @@ def user_following(username):
 
     return jsonify({'following_count': following_count}), 200
 
+@app.route('/followers_list/<string:username>', methods=['GET'])
+def followers_list(username):
+    user = User.query.filter_by(Username=username).first()
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    followers = (
+        db.session.query(User)
+        .join(Follow, Follow.FollowerID == User.UserID)
+        .filter(Follow.FolloweeID == user.UserID)
+        .all()
+    )
+
+    result = [
+        {
+            'UserID': f.UserID,
+            'Username': f.Username,
+            'ProfilePicture': f.ProfilePicture,
+        }
+        for f in followers
+    ]
+
+    return jsonify({'followers': result}), 200
+
+@app.route('/following_list/<string:username>', methods=['GET'])
+def following_list(username):
+    user = User.query.filter_by(Username=username).first()
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    following = (
+        db.session.query(User)
+        .join(Follow, Follow.FolloweeID == User.UserID)
+        .filter(Follow.FollowerID == user.UserID)
+        .all()
+    )
+
+    result = [
+        {
+            'UserID': f.UserID,
+            'Username': f.Username,
+            'ProfilePicture': f.ProfilePicture,
+        }
+        for f in following
+    ]
+
+    return jsonify({'following': result}), 200
+
+@app.route('/user_clubs/<string:username>', methods=['GET'])
+def user_clubs(username):
+    user = User.query.filter_by(Username=username).first()
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    memberships = Membership.query.filter_by(UserID=user.UserID).all()
+
+    clubs = []
+    for m in memberships:
+        club = Club.query.get(m.ClubID)
+        if club:
+            clubs.append({
+                'ClubID': club.ClubID,
+                'Name': club.Name,
+                'Genre': club.Genre,
+                'OwnerID': club.OwnerID,
+            })
+
+    return jsonify({'clubs': clubs}), 200
+
 
 # =========================
 # Main
